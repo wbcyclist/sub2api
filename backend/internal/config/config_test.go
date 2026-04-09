@@ -1,6 +1,7 @@
 package config
 
 import (
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -570,22 +571,46 @@ func TestConfigAddressHelpers(t *testing.T) {
 		DBName:   "sub2api",
 		SSLMode:  "disable",
 	}
-	if !strings.Contains(dbCfg.DSN(), "password=") {
-	} else {
+	dsn := dbCfg.DSN()
+	if strings.Contains(dsn, "password=") {
 		t.Fatalf("DatabaseConfig.DSN() should not include password when empty")
+	}
+	parsed, err := url.Parse(dsn)
+	if err != nil {
+		t.Fatalf("DatabaseConfig.DSN() should be a valid URL: %v", err)
+	}
+	if parsed.User.Username() != "postgres" {
+		t.Fatalf("DatabaseConfig.DSN() username = %q, want postgres", parsed.User.Username())
+	}
+	if _, hasPassword := parsed.User.Password(); hasPassword {
+		t.Fatalf("DatabaseConfig.DSN() should omit password in URL userinfo when empty: %q", dsn)
 	}
 
 	dbCfg.Password = "secret"
-	if !strings.Contains(dbCfg.DSN(), "password=secret") {
-		t.Fatalf("DatabaseConfig.DSN() missing password")
+	dsn = dbCfg.DSN()
+	parsed, err = url.Parse(dsn)
+	if err != nil {
+		t.Fatalf("DatabaseConfig.DSN() should be a valid URL: %v", err)
+	}
+	password, hasPassword := parsed.User.Password()
+	if !hasPassword || password != "secret" {
+		t.Fatalf("DatabaseConfig.DSN() should include password in URL userinfo: %q", dsn)
 	}
 
 	dbCfg.Password = ""
-	if strings.Contains(dbCfg.DSNWithTimezone("UTC"), "password=") {
+	dsnWithTZ := dbCfg.DSNWithTimezone("UTC")
+	if strings.Contains(dsnWithTZ, "password=") {
 		t.Fatalf("DatabaseConfig.DSNWithTimezone() should omit password when empty")
 	}
+	parsed, err = url.Parse(dsnWithTZ)
+	if err != nil {
+		t.Fatalf("DatabaseConfig.DSNWithTimezone() should be a valid URL: %v", err)
+	}
+	if parsed.Query().Get("TimeZone") != "UTC" {
+		t.Fatalf("DatabaseConfig.DSNWithTimezone() should use provided timezone, got: %q", parsed.Query().Get("TimeZone"))
+	}
 
-	if !strings.Contains(dbCfg.DSNWithTimezone(""), "TimeZone=Asia/Shanghai") {
+	if !strings.Contains(dbCfg.DSNWithTimezone(""), "TimeZone=Asia%2FShanghai") {
 		t.Fatalf("DatabaseConfig.DSNWithTimezone() should use default timezone")
 	}
 	if !strings.Contains(dbCfg.DSNWithTimezone("UTC"), "TimeZone=UTC") {
@@ -801,10 +826,15 @@ func TestDatabaseDSNWithTimezone_WithPassword(t *testing.T) {
 		SSLMode:  "prefer",
 	}
 	got := d.DSNWithTimezone("UTC")
-	if !strings.Contains(got, "password=p") {
+	parsed, err := url.Parse(got)
+	if err != nil {
+		t.Fatalf("DSNWithTimezone should return valid URL: %v", err)
+	}
+	password, hasPassword := parsed.User.Password()
+	if !hasPassword || password != "p" {
 		t.Fatalf("DSNWithTimezone should include password: %q", got)
 	}
-	if !strings.Contains(got, "TimeZone=UTC") {
+	if parsed.Query().Get("TimeZone") != "UTC" {
 		t.Fatalf("DSNWithTimezone should include TimeZone=UTC: %q", got)
 	}
 }
